@@ -78,7 +78,7 @@ MODELO = configurar()
 MAX_TENTATIVAS = 3     # ciclo redigir <-> validar
 MAX_REJEICOES = 2      # ciclo chefia -> redigir
 USAR_VOTACAO = True           # 🆕 A (opcional): True usa os 3 extratores com votação (etapa02_extracao.py)
-USAR_TRIAGEM_HUMANA = False   # 🆕 C (opcional): True liga as duas faixas e o nó triagem_humana
+USAR_TRIAGEM_HUMANA = True    # 🆕 C (opcional): True liga as duas faixas e o nó triagem_humana
 LIMIAR_OK = 0.4        # 🆕 C: abaixo disto, segue direto
 LIMIAR_BLOQUEIO = 0.8  # 🆕 C: a partir disto, bloqueia; entre os dois, um humano decide
 GUARDRAIL_LIGADO = "--sem-guardrail" not in sys.argv  # ETAPA 9.5
@@ -145,6 +145,11 @@ def proteger_entrada(estado: Estado) -> dict:
     if sensivel:
         return {"bloqueado": True, "motivo_bloqueio": MENSAGENS[sensivel], "caminho": ["proteger_entrada"]}
     nota, _ = nota_escopo(estado["texto"])
+    if USAR_TRIAGEM_HUMANA:  # 🆕 C.1: duas faixas; entre elas, bloqueado=False e o roteador manda para a triagem
+        if nota >= LIMIAR_BLOQUEIO:
+            return {"bloqueado": True, "motivo_bloqueio": MENSAGENS["fora_do_escopo"], "nota_escopo": nota,
+                    "caminho": ["proteger_entrada"]}
+        return {"bloqueado": False, "nota_escopo": nota, "caminho": ["proteger_entrada"]}
     if nota >= LIMIAR:
         return {"bloqueado": True, "motivo_bloqueio": MENSAGENS["fora_do_escopo"], "nota_escopo": nota,
                 "caminho": ["proteger_entrada"]}
@@ -154,7 +159,11 @@ def proteger_entrada(estado: Estado) -> dict:
 def rotear_entrada(estado: Estado) -> str:
     # ETAPA 7.2 -- "bloqueado" ou "ok".
     #   🆕 C.1 (opcional) -- com USAR_TRIAGEM_HUMANA, também "duvida" (nota entre LIMIAR_OK e LIMIAR_BLOQUEIO)
-    return "bloqueado" if estado.get("bloqueado") else "ok"
+    if estado.get("bloqueado"):
+        return "bloqueado"
+    if USAR_TRIAGEM_HUMANA and LIMIAR_OK <= estado.get("nota_escopo", 0) < LIMIAR_BLOQUEIO:
+        return "duvida"  # 🆕 C.1
+    return "ok"
 
 
 def triagem_humana(estado: Estado) -> dict:
@@ -164,12 +173,20 @@ def triagem_humana(estado: Estado) -> dict:
     #   Se segue, ANEXE a orientação ao texto (ex.: "[RH: tratar como abono]") para o extrator usar.
     #   Lembre: na retomada este nó roda DE NOVO desde o início -- nada com efeito colateral antes do interrupt().
     #   Conceito: aula7/exemplos/06_human_in_the_loop/main.py (lá o humano aprova a SAÍDA; aqui decide a ENTRADA)
-    raise NotImplementedError("🆕 C.2: triagem_humana")
+    resposta = interrupt({"pergunta": "Este texto deve seguir como pedido ao RH?", "texto": estado["texto"],
+                          "nota": estado.get("nota_escopo"), "quem_decide": "atendente do RH"})
+    # daqui para baixo só roda na RETOMADA
+    if resposta.get("segue"):
+        texto = estado["texto"]
+        if resposta.get("orientacao"):
+            texto += f"\n[RH: {resposta['orientacao']}]"  # o extrator lê a orientação do atendente
+        return {"triagem": resposta, "texto": texto, "caminho": ["triagem_humana"]}
+    return {"triagem": resposta, "motivo_bloqueio": "Pedido recusado na triagem do RH.", "caminho": ["triagem_humana"]}
 
 
 def rotear_triagem(estado: Estado) -> str:
     # 🆕 C.2 -- "segue" ou "recusa"
-    raise NotImplementedError("🆕 C.2: rotear_triagem")
+    return "segue" if (estado.get("triagem") or {}).get("segue") else "recusa"
 
 
 def no_extrair(estado: Estado) -> dict:
@@ -458,7 +475,11 @@ def construir(checkpointer=None):
     #   recusar, pedir_dados e registrar -> END
     construtor.add_edge(START, "receber")
     construtor.add_edge("receber", "proteger_entrada")
-    construtor.add_conditional_edges("proteger_entrada", rotear_entrada, {"bloqueado": "recusar", "ok": "extrair"})
+    rotas_entrada = {"bloqueado": "recusar", "ok": "extrair"}
+    if USAR_TRIAGEM_HUMANA:  # 🆕 C.2
+        rotas_entrada["duvida"] = "triagem_humana"
+        construtor.add_conditional_edges("triagem_humana", rotear_triagem, {"segue": "extrair", "recusa": "recusar"})
+    construtor.add_conditional_edges("proteger_entrada", rotear_entrada, rotas_entrada)
     construtor.add_conditional_edges("extrair", rotear_extracao, {"incompleto": "pedir_dados", "ok": "identificar_servidor"})
     construtor.add_conditional_edges("identificar_servidor", rotear_servidor,
                                      {"nao_encontrado": "pedir_dados", "ok": "calcular_periodo"})
