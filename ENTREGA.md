@@ -2,7 +2,7 @@
 
 **Aluno(s):**
 **Até onde chegou:** ( ) Marco mínimo (Etapa 6)  ( ) Marco completo (Etapa 9)  ( ) Etapas 10–11
-**Opcionais e bônus feitos:** ( ) 🆕 A  ( ) 🆕 B  ( ) 🆕 C  ( ) Outro: ______
+**Opcionais e bônus feitos:** (x) 🆕 A  (x) 🆕 B  (x) 🆕 C  ( ) Outro: ______
 
 ## Etapa 0: quem verifica cada regra?
 
@@ -107,9 +107,54 @@ graph TD;
 
 ## Opcionais (preencha só os que fez)
 
-- 🆕 A: votos e decisão do C9: ___ ; tempo dos 3 extratores em paralelo ___ s, em sequência ___ s
+- 🆕 A: votos e decisão do C9: os 3 votaram `tipo=ferias None..None vende=0`, unânimes com as datas nulas (`divergencia=False`), e o grafo pediu os dados; tempo dos 3 extratores em paralelo 2,4 s, em sequência 5,6 s (C2)
 - 🆕 B: saída do `python etapa06_linear.py --governanca`:
+
+  ```
+  [modelo] openai:openai/gpt-4o-mini
+  
+  a) Coordenador com uma tool que não é dele
+  [governança] Coordenador -> consultar_remuneracao: BARRADO (fora da lista do Coordenador)
+     barrado: Coordenador não pode usar consultar_remuneracao
+  
+  b) C2 com MAX_TOOLS = 1
+  [1/9] guardrails
+  [2/9] extração: ferias 1002 2027-04-12..2027-04-26
+  [3/9] servidor: Bruno Castro (Plantão A)
+  [4/9] período: 10 dia(s) útil(eis), retorno 2027-04-27 (fonte: brasilapi)
+  [5/9] violações: nenhuma
+  [governança] Coordenador -> parecer_normas: OK (1 de 1)
+  [governança] Coordenador -> parecer_escala: BARRADO (orçamento de tools estourado (2 de 1))
+  [governança] Coordenador -> parecer_financeiro: BARRADO (orçamento de tools estourado (3 de 1))
+     barrado: orçamento de tools estourado (2 de 1)
+  ```
+
+  A linha `[tool] consultar_remuneracao(1002) EXECUTOU` não aparece no (a): o hook barra antes de a tool rodar.
 - 🆕 C: caminho do C10 com a triagem humana (sim e não):
+
+  ```
+  $ python etapa07_grafo.py C10_zona_cinzenta
+  [modelo] openai:openai/gpt-4o-mini  [guardrail de entrada ligado]
+  [C10_zona_cinzenta] caminho: receber -> proteger_entrada
+  [C10_zona_cinzenta] PAUSADO em ('triagem_humana',): Este texto deve seguir como pedido ao RH?
+  
+  $ python etapa07_grafo.py --retomar C10_zona_cinzenta "nao:procure a junta médica ou peça licença para acompanhar familiar" rh
+  [modelo] openai:openai/gpt-4o-mini  [guardrail de entrada ligado]
+  [C10_zona_cinzenta] caminho: receber -> proteger_entrada -> triagem_humana -> recusar
+  [C10_zona_cinzenta] resultado: recusado  protocolo: None
+  [C10_zona_cinzenta] despacho: procure a junta médica ou peça licença para acompanhar familiar
+  
+  $ python etapa07_grafo.py C10_zona_cinzenta
+  [modelo] openai:openai/gpt-4o-mini  [guardrail de entrada ligado]
+  [C10_zona_cinzenta] caminho: receber -> proteger_entrada
+  [C10_zona_cinzenta] PAUSADO em ('triagem_humana',): Este texto deve seguir como pedido ao RH?
+  
+  $ python etapa07_grafo.py --retomar C10_zona_cinzenta "sim:tratar como abono" rh
+  [modelo] openai:openai/gpt-4o-mini  [guardrail de entrada ligado]
+  [C10_zona_cinzenta] caminho: receber -> proteger_entrada -> triagem_humana -> extrair -> pedir_dados
+  [C10_zona_cinzenta] resultado: pediu_dados  protocolo: None
+  [C10_zona_cinzenta] despacho: Para seguir, informe a matrícula e as datas exatas (AAAA-MM-DD).
+  ```
 
 ## Reflexão (até 3 linhas cada)
 
