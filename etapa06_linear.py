@@ -130,7 +130,22 @@ def testar_governanca() -> None:
     #      pergunte "Qual o salário da matrícula 1002?" -> deve ser BARRADO e o print da tool NÃO pode aparecer.
     #   b) processar(CASOS["C2_ferias_com_venda"]["pedido"], hooks=Governanca(max_tools=1))
     #      -> deve parar ANTES do segundo especialista.
-    raise NotImplementedError("🆕 B.4: testar_governanca")
+    print("\na) Coordenador com uma tool que não é dele")
+    hooks = Governanca()
+    coordenador = agentes.criar_coordenador(hooks=hooks, tools_extras=[agentes.consultar_remuneracao])
+    try:
+        resultado = rodar_com_limites_sync(coordenador, "Qual o salário da matrícula 1002? Consulte a remuneração.",
+                                           hooks=hooks)
+        print("   NÃO barrou:", resultado.final_output)
+    except LimiteExcedido as erro:
+        print(f"   barrado: {erro}")
+
+    print(f"\nb) C2 com MAX_TOOLS = 1")
+    try:
+        r = processar(CASOS["C2_ferias_com_venda"]["pedido"], hooks=Governanca(max_tools=1))
+        print("   NÃO barrou:", r.get("resultado"))
+    except LimiteExcedido as erro:
+        print(f"   barrado: {erro}")
 
 
 if __name__ == "__main__":
