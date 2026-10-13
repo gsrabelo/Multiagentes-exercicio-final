@@ -67,6 +67,7 @@ from datetime import date, timedelta
 
 from etapa04_ferramentas import gerar_protocolo, inicio_permitido, rodar_com_limites_sync
 from etapa03_guardrails import LIMIAR, MENSAGENS, encontrar_dado_sensivel, nota_escopo
+from etapa10_governanca import Governanca
 from etapa10_observabilidade import medido
 from provedor import configurar
 from etapa06_regras import precisa_chefia, resumo_periodo, violacoes_objetivas
@@ -208,7 +209,8 @@ def calcular_periodo(estado: Estado) -> dict:
     periodo = resumo_periodo(pedido["data_inicio"], pedido["data_fim"])
     escala = chamar_mcp("consultar_escala", {"equipe": estado["servidor"]["equipe"], "inicio": pedido["data_inicio"],
                                              "fim": pedido["data_fim"]})
-    return {"periodo": periodo, "escala": escala, "caminho": ["calcular_periodo"]}
+    return {"periodo": periodo, "escala": escala, "fonte_feriados": periodo["fonte_feriados"],
+            "caminho": ["calcular_periodo"]}
 
 
 # ------------------------------------------------------------------ ETAPA 7.3: paralelismo
@@ -218,12 +220,20 @@ def _fatos(estado: Estado) -> str:
             f"PERÍODO: {estado['periodo']}\nESCALA DA EQUIPE: {estado['escala']}")
 
 
+def _rodar_observado(agente, entrada: str) -> tuple[str, dict]:
+    """Roda o agente com o hook da Etapa 10.1 e devolve (texto, extras). Os extras (tokens e o que o hook registrou)
+    vão no retorno do nó só para o medido() gravar: o Estado não tem essas chaves, então o LangGraph os descarta."""
+    hooks = Governanca(verbose=False)
+    resultado = rodar_com_limites_sync(agente, entrada, hooks=hooks)
+    return resultado.final_output, {"tokens": resultado.context_wrapper.usage.total_tokens, "eventos": hooks.eventos}
+
+
 def no_normas(estado: Estado) -> dict:
     # ETAPA 7.3 -- rode agentes.criar_normas() com rodar_com_limites_sync(_fatos(estado)) e escreva SÓ
     #   {"parecer_normas": ..., "caminho": ["normas"]}. Os três especialistas rodam no MESMO passo.
     #   Referência: aula7/exemplos/08_paralelismo/main.py (cada ramo escreve no SEU campo)
-    parecer = rodar_com_limites_sync(agentes.criar_normas(), _fatos(estado)).final_output
-    return {"parecer_normas": parecer, "caminho": ["normas"]}
+    parecer, extras = _rodar_observado(agentes.criar_normas(), _fatos(estado))
+    return {"parecer_normas": parecer, "caminho": ["normas"], **extras}
 
 
 def _sugerir_periodo(estado: Estado) -> tuple[str, str] | None:
@@ -255,8 +265,8 @@ def no_escala(estado: Estado) -> dict:
     sugestao = _sugerir_periodo(estado)
     if sugestao:
         entrada += f"\nPERÍODO SUGERIDO (calculado pelo sistema, N3 e N5 conferidas): {sugestao[0]} a {sugestao[1]}"
-    parecer = rodar_com_limites_sync(agentes.criar_escala(), entrada).final_output
-    return {"parecer_escala": parecer, "caminho": ["escala"]}
+    parecer, extras = _rodar_observado(agentes.criar_escala(), entrada)
+    return {"parecer_escala": parecer, "caminho": ["escala"], **extras}
 
 
 def no_financeiro(estado: Estado) -> dict:
@@ -265,8 +275,8 @@ def no_financeiro(estado: Estado) -> dict:
     pedido = estado["pedido"]
     if pedido["tipo"] == "abono" or (pedido["tipo"] == "ferias" and not pedido.get("dias_vendidos")):
         return {"parecer_financeiro": "não se aplica (sem valor a pagar)", "caminho": ["financeiro"]}
-    parecer = rodar_com_limites_sync(agentes.criar_financeiro(), _fatos(estado)).final_output
-    return {"parecer_financeiro": parecer, "caminho": ["financeiro"]}
+    parecer, extras = _rodar_observado(agentes.criar_financeiro(), _fatos(estado))
+    return {"parecer_financeiro": parecer, "caminho": ["financeiro"], **extras}
 
 
 def consolidar(estado: Estado) -> dict:
@@ -300,8 +310,8 @@ def redigir_despacho(estado: Estado) -> dict:
         entrada += f"\nFEEDBACK DA VALIDAÇÃO (corrija): {estado['erro_validacao']}"
     if estado.get("feedback_chefia"):
         entrada += f"\nFEEDBACK DA CHEFIA (corrija): {estado['feedback_chefia']}"
-    despacho = rodar_com_limites_sync(agentes.criar_redator(), entrada).final_output
-    return {"despacho": despacho, "caminho": ["redigir_despacho"]}
+    despacho, extras = _rodar_observado(agentes.criar_redator(), entrada)
+    return {"despacho": despacho, "caminho": ["redigir_despacho"], **extras}
 
 
 def problemas_do_despacho(despacho: str, pedido: dict) -> list[str]:
