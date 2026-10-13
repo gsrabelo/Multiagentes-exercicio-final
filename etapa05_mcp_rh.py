@@ -124,8 +124,18 @@ def _auditar(protocolo: str, decisao_acesso: str, motivo: str, parametros: dict)
     #   thread_id, quem pediu (aprovador), tool ("registrar_decisao"), protocolo, decisao_acesso ("ALLOW"/"DENY"),
     #   motivo e os parâmetros (SEM o token e SEM o despacho inteiro).
     #   Referência: aula5/exemplos/10_seguranca/server_seguro.py (_registrar_auditoria), aqui em JSON Lines.
-    #   Até fazer a 9.3, este pass deixa a escrita funcionar sem auditoria.
-    pass
+    linha = {
+        "quando": datetime.now().isoformat(),
+        "thread_id": parametros.get("thread_id", ""),
+        "quem": parametros.get("aprovador"),
+        "tool": "registrar_decisao",
+        "protocolo": protocolo,
+        "decisao_acesso": decisao_acesso,
+        "motivo": motivo,
+        "parametros": parametros,  # já vem SEM o token e SEM o despacho (montado em registrar_decisao)
+    }
+    with open(ARQUIVO_AUDITORIA, "a", encoding="utf-8") as arquivo:
+        arquivo.write(json.dumps(linha, ensure_ascii=False) + "\n")
 
 
 @mcp.tool()
@@ -156,6 +166,22 @@ def registrar_decisao(protocolo: str, matricula: str, tipo: str, inicio: str, fi
     #   - decisao == "deferido" e tipo in TIPOS_COM_CHEFIA e aprovador != chefia do servidor no cadastro.
     #   Devolva {"sucesso": False, "erro": "..."} -- quem nega é o SERVER, não o agente.
     #   Referência: aula5/exemplos/10_seguranca/server_seguro.py (alterar_status_ocorrencia)
+    erro = None
+    if not TOKEN_REGISTRO or token != TOKEN_REGISTRO:
+        erro = "token inválido"
+    elif decisao not in DECISOES_VALIDAS:
+        erro = f"decisão inválida: {decisao!r} (use {', '.join(sorted(DECISOES_VALIDAS))})"
+    elif str(aprovador).strip() == str(matricula).strip():
+        erro = "autoaprovação (N8)"
+    elif decisao == "deferido" and tipo in TIPOS_COM_CHEFIA:
+        servidor = carregar_servidores().get(str(matricula).strip())
+        if servidor is None:
+            erro = "matrícula não encontrada"
+        elif str(aprovador).strip() != str(servidor["chefia"]):
+            erro = f"aprovador não é a chefia {servidor['chefia']} (N8)"
+    if erro:
+        _auditar(protocolo, "DENY", erro, parametros)
+        return {"sucesso": False, "erro": erro}
 
     # ETAPA 5.2 -- grave em ARQUIVO_REGISTROS (use _ler_registros/_gravar_registros).
     #   Protocolo já existe -> NÃO grave de novo; devolva {"sucesso": True, "duplicado": True, ...}.
