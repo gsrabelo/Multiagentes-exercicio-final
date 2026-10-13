@@ -63,7 +63,9 @@ from etapa05_cliente_mcp import chamar_mcp
 from dados.casos import CASOS
 from dados_rh import SAIDAS
 from etapa02_extracao import extrair, extrair_com_votacao
-from etapa04_ferramentas import gerar_protocolo, rodar_com_limites_sync
+from datetime import date, timedelta
+
+from etapa04_ferramentas import gerar_protocolo, inicio_permitido, rodar_com_limites_sync
 from etapa03_guardrails import LIMIAR, MENSAGENS, encontrar_dado_sensivel, nota_escopo
 from etapa10_observabilidade import medido
 from provedor import configurar
@@ -96,7 +98,7 @@ class Estado(TypedDict, total=False):
     parecer_normas: str
     parecer_escala: str
     parecer_financeiro: str
-    violacoes: list[str]          # ETAPA 7.1: troque por Annotated[list[str], operator.add] (por quê? leia 7.3)
+    violacoes: Annotated[list[str], operator.add]  # ETAPA 7.1: reducer (dois ramos podem escrever no mesmo passo)
     decisao: str                  # "deferido" | "indeferido" | "indeferido_pela_chefia"
     despacho: str
     tentativas: int
@@ -135,13 +137,22 @@ def proteger_entrada(estado: Estado) -> dict:
     #   Guarde "nota_escopo" no estado. Sempre devolva "caminho": ["proteger_entrada"].
     # 🆕 C.1 (opcional) -- com USAR_TRIAGEM_HUMANA, troque o LIMIAR único por DUAS faixas: < LIMIAR_OK segue;
     #   >= LIMIAR_BLOQUEIO bloqueia; no meio, bloqueado=False com a nota no estado: o roteador manda para triagem_humana.
-    raise NotImplementedError("ETAPA 7.2: proteger_entrada")
+    if not GUARDRAIL_LIGADO:
+        return {"bloqueado": False, "caminho": ["proteger_entrada"]}
+    sensivel = encontrar_dado_sensivel(estado["texto"])
+    if sensivel:
+        return {"bloqueado": True, "motivo_bloqueio": MENSAGENS[sensivel], "caminho": ["proteger_entrada"]}
+    nota, _ = nota_escopo(estado["texto"])
+    if nota >= LIMIAR:
+        return {"bloqueado": True, "motivo_bloqueio": MENSAGENS["fora_do_escopo"], "nota_escopo": nota,
+                "caminho": ["proteger_entrada"]}
+    return {"bloqueado": False, "nota_escopo": nota, "caminho": ["proteger_entrada"]}
 
 
 def rotear_entrada(estado: Estado) -> str:
     # ETAPA 7.2 -- "bloqueado" ou "ok".
     #   🆕 C.1 (opcional) -- com USAR_TRIAGEM_HUMANA, também "duvida" (nota entre LIMIAR_OK e LIMIAR_BLOQUEIO)
-    raise NotImplementedError("ETAPA 7.2: rotear_entrada")
+    return "bloqueado" if estado.get("bloqueado") else "ok"
 
 
 def triagem_humana(estado: Estado) -> dict:
@@ -163,30 +174,41 @@ def no_extrair(estado: Estado) -> dict:
     # ETAPA 7.2 -- pedido = extrair(texto); divergencia = False
     #   🆕 A (opcional) -- se USAR_VOTACAO: pedido, divergencia, votos = asyncio.run(extrair_com_votacao(texto))
     #   Devolva {"pedido": pedido.model_dump(mode="json"), "divergencia": ..., "caminho": ["extrair"]}
-    raise NotImplementedError("ETAPA 7.2: no_extrair")
+    pedido, divergencia = extrair(estado["texto"]), False
+    return {"pedido": pedido.model_dump(mode="json"), "divergencia": divergencia, "caminho": ["extrair"]}
 
 
 def rotear_extracao(estado: Estado) -> str:
     # ETAPA 7.2 -- "incompleto" se divergencia, ou sem matrícula, ou sem data_inicio/data_fim; senão "ok".
     #   (pedido de licença de saúde também não segue: N9 -- mande para "incompleto" ou crie um nó próprio)
-    raise NotImplementedError("ETAPA 7.2: rotear_extracao")
+    pedido = estado["pedido"]
+    if estado.get("divergencia") or pedido.get("tipo") not in ("ferias", "abono", "diaria"):
+        return "incompleto"  # licença de saúde (N9) e "outro" também não seguem por aqui
+    if not (pedido.get("matricula") and pedido.get("data_inicio") and pedido.get("data_fim")):
+        return "incompleto"
+    return "ok"
 
 
 def identificar_servidor(estado: Estado) -> dict:
     # ETAPA 7.2 -- servidor = chamar_mcp("consultar_servidor", {"matricula": ...}) -> {"servidor": servidor, ...}
-    raise NotImplementedError("ETAPA 7.2: identificar_servidor")
+    servidor = chamar_mcp("consultar_servidor", {"matricula": estado["pedido"]["matricula"]})
+    return {"servidor": servidor, "caminho": ["identificar_servidor"]}
 
 
 def rotear_servidor(estado: Estado) -> str:
     # ETAPA 7.2 -- "nao_encontrado" se o MCP devolveu {"erro": ...}; senão "ok"
-    raise NotImplementedError("ETAPA 7.2: rotear_servidor")
+    return "nao_encontrado" if "erro" in estado["servidor"] else "ok"
 
 
 def calcular_periodo(estado: Estado) -> dict:
     # ETAPA 7.2 -- periodo = resumo_periodo(inicio, fim)  (API de feriados, Etapa 4)
     #              escala  = chamar_mcp("consultar_escala", {"equipe": ..., "inicio": ..., "fim": ...})
     #   Devolva os dois (e "fonte_feriados" se quiser a métrica da Etapa 10).
-    raise NotImplementedError("ETAPA 7.2: calcular_periodo")
+    pedido = estado["pedido"]
+    periodo = resumo_periodo(pedido["data_inicio"], pedido["data_fim"])
+    escala = chamar_mcp("consultar_escala", {"equipe": estado["servidor"]["equipe"], "inicio": pedido["data_inicio"],
+                                             "fim": pedido["data_fim"]})
+    return {"periodo": periodo, "escala": escala, "caminho": ["calcular_periodo"]}
 
 
 # ------------------------------------------------------------------ ETAPA 7.3: paralelismo
@@ -200,18 +222,51 @@ def no_normas(estado: Estado) -> dict:
     # ETAPA 7.3 -- rode agentes.criar_normas() com rodar_com_limites_sync(_fatos(estado)) e escreva SÓ
     #   {"parecer_normas": ..., "caminho": ["normas"]}. Os três especialistas rodam no MESMO passo.
     #   Referência: aula7/exemplos/08_paralelismo/main.py (cada ramo escreve no SEU campo)
-    raise NotImplementedError("ETAPA 7.3: no_normas")
+    parecer = rodar_com_limites_sync(agentes.criar_normas(), _fatos(estado)).final_output
+    return {"parecer_normas": parecer, "caminho": ["normas"]}
+
+
+def _sugerir_periodo(estado: Estado) -> tuple[str, str] | None:
+    """Com conflito de escala (N5), o primeiro período com os mesmos dias corridos que começa depois do afastamento
+    que conflita, num dia permitido pela N3 e sem estourar o limite da equipe. Conta de calendário fica no Python:
+    o LLM erra dia da semana."""
+    pedido, escala = estado["pedido"], estado["escala"]
+    outros = [a for a in escala.get("afastamentos", []) if a["matricula"] != pedido["matricula"]]
+    if len(outros) < escala.get("limite_afastados", 1):
+        return None
+    dias = estado["periodo"]["dias_corridos"]
+    dia = max(date.fromisoformat(a["fim"]) for a in outros) + timedelta(days=1)
+    for _ in range(90):
+        inicio, fim = dia.isoformat(), (dia + timedelta(days=dias - 1)).isoformat()
+        if inicio_permitido(inicio):
+            nova = chamar_mcp("consultar_escala", {"equipe": estado["servidor"]["equipe"], "inicio": inicio, "fim": fim})
+            if len([a for a in nova.get("afastamentos", []) if a["matricula"] != pedido["matricula"]]) < nova.get(
+                    "limite_afastados", 1):
+                return inicio, fim
+        dia += timedelta(days=1)
+    return None
 
 
 def no_escala(estado: Estado) -> dict:
     # ETAPA 7.3 -- idem, agentes.criar_escala() -> {"parecer_escala": ..., "caminho": ["escala"]}
-    raise NotImplementedError("ETAPA 7.3: no_escala")
+    if estado["pedido"]["tipo"] == "diaria":  # viagem a serviço não entra na escala (mesma escolha do Coordenador)
+        return {"parecer_escala": "não se aplica (viagem a serviço)", "caminho": ["escala"]}
+    entrada = _fatos(estado)
+    sugestao = _sugerir_periodo(estado)
+    if sugestao:
+        entrada += f"\nPERÍODO SUGERIDO (calculado pelo sistema, N3 e N5 conferidas): {sugestao[0]} a {sugestao[1]}"
+    parecer = rodar_com_limites_sync(agentes.criar_escala(), entrada).final_output
+    return {"parecer_escala": parecer, "caminho": ["escala"]}
 
 
 def no_financeiro(estado: Estado) -> dict:
     # ETAPA 7.3 -- idem, agentes.criar_financeiro() -> {"parecer_financeiro": ..., "caminho": ["financeiro"]}
     #   (abono não tem valor: devolva "não se aplica" sem chamar o LLM -- economiza tokens)
-    raise NotImplementedError("ETAPA 7.3: no_financeiro")
+    pedido = estado["pedido"]
+    if pedido["tipo"] == "abono" or (pedido["tipo"] == "ferias" and not pedido.get("dias_vendidos")):
+        return {"parecer_financeiro": "não se aplica (sem valor a pagar)", "caminho": ["financeiro"]}
+    parecer = rodar_com_limites_sync(agentes.criar_financeiro(), _fatos(estado)).final_output
+    return {"parecer_financeiro": parecer, "caminho": ["financeiro"]}
 
 
 def consolidar(estado: Estado) -> dict:
@@ -219,7 +274,8 @@ def consolidar(estado: Estado) -> dict:
     #   {"violacoes": [...], "decisao": "indeferido" se houver violação, senão "deferido", "caminho": ["consolidar"]}
     #   Experimento (Etapa 7.1): faça no_escala também devolver {"violacoes": ["teste"]}. Sem o reducer em
     #   `violacoes`, o que acontece? E com ele? (aula7/exemplos/08_paralelismo/exercicio.md, item 4)
-    raise NotImplementedError("ETAPA 7.3: consolidar")
+    violacoes = violacoes_objetivas(estado["pedido"], estado["servidor"], estado["periodo"], estado["escala"])
+    return {"violacoes": violacoes, "decisao": "indeferido" if violacoes else "deferido", "caminho": ["consolidar"]}
 
 
 # ------------------------------------------------------------------ ETAPA 7.4: ciclo
@@ -227,7 +283,25 @@ def redigir_despacho(estado: Estado) -> dict:
     # ETAPA 7.4 -- monte a entrada do Redator com _fatos(estado), a decisão, as violações, os três pareceres
     #   e, se houver, estado["erro_validacao"] (da validação) e estado["feedback_chefia"] (da Etapa 8).
     #   Devolva {"despacho": ..., "caminho": ["redigir_despacho"]}.
-    raise NotImplementedError("ETAPA 7.4: redigir_despacho")
+    inicio = estado["pedido"]["data_inicio"]
+    abertura = "Defiro" if estado["decisao"] == "deferido" else "Indefiro"
+    entrada = (
+        f"DECISÃO (obrigatória, não mude): {estado['decisao'].upper()}. Comece o despacho por '{abertura}' e escreva "
+        f"'Pedido {estado['decisao']}.'\n"
+        f"Cite a matrícula {estado['pedido']['matricula']} e a data de início exatamente assim: "
+        f"{'/'.join(reversed(inicio.split('-')))}\n"
+        f"{_fatos(estado)}\n"
+        f"VIOLAÇÕES OBJETIVAS: {estado.get('violacoes') or 'nenhuma'}\n"
+        f"PARECER NORMAS: {estado.get('parecer_normas')}\n"
+        f"PARECER ESCALA: {estado.get('parecer_escala')}\n"
+        f"PARECER FINANCEIRO: {estado.get('parecer_financeiro')}"
+    )
+    if estado.get("erro_validacao"):
+        entrada += f"\nFEEDBACK DA VALIDAÇÃO (corrija): {estado['erro_validacao']}"
+    if estado.get("feedback_chefia"):
+        entrada += f"\nFEEDBACK DA CHEFIA (corrija): {estado['feedback_chefia']}"
+    despacho = rodar_com_limites_sync(agentes.criar_redator(), entrada).final_output
+    return {"despacho": despacho, "caminho": ["redigir_despacho"]}
 
 
 def problemas_do_despacho(despacho: str, pedido: dict) -> list[str]:
@@ -250,7 +324,15 @@ def validar(estado: Estado) -> dict:
     # ETAPA 7.4 -- use problemas_do_despacho(estado["despacho"], estado["pedido"]) (pronta, logo acima) e devolva
     #   {"tentativas": estado["tentativas"] + 1, "erro_validacao": "; ".join(problemas), "caminho": ["validar"]}
     #   O ponto da etapa é o CICLO: é esta contagem de tentativas que o rotear_validacao usa para parar.
-    raise NotImplementedError("ETAPA 7.4: validar")
+    problemas = problemas_do_despacho(estado["despacho"], estado["pedido"])
+    # a pronta só procura "deferid", que também casa com "indeferido": confere se o texto não contradiz a decisão
+    indefere = "indefer" in estado["despacho"].lower()
+    if estado["decisao"] == "deferido" and indefere:
+        problemas.append("a decisão é DEFERIDO: o texto não pode indeferir")
+    if estado["decisao"] == "indeferido" and not indefere:
+        problemas.append("a decisão é INDEFERIDO: diga que o pedido foi indeferido")
+    return {"tentativas": estado.get("tentativas", 0) + 1, "erro_validacao": "; ".join(problemas),
+            "caminho": ["validar"]}
 
 
 def rotear_validacao(estado: Estado) -> str:
@@ -258,7 +340,9 @@ def rotear_validacao(estado: Estado) -> str:
     #              (válido OU estourou as tentativas)   -> "chefia" se precisa_chefia(pedido, violacoes)
     #                                                      senão "registrar"
     #   (antes da Etapa 8, mande "chefia" também para "registrar": ainda não há o nó da chefia)
-    raise NotImplementedError("ETAPA 7.4: rotear_validacao")
+    if estado.get("erro_validacao") and estado["tentativas"] < MAX_TENTATIVAS:
+        return "redigir"
+    return "chefia" if precisa_chefia(estado["pedido"], estado.get("violacoes", [])) else "registrar"
 
 
 # ------------------------------------------------------------------ ETAPA 8: a chefia
@@ -286,7 +370,20 @@ def registrar(estado: Estado) -> dict:
     #   ou "sistema"}). Se rejeicoes >= MAX_REJEICOES, decisao = "indeferido_pela_chefia".
     #   Devolva {"protocolo": ..., "resultado": "registrado" ou "negado_pelo_server", "caminho": ["registrar"]}.
     # ETAPA 9.4 -- ANTES de gravar: encontrar_dado_sensivel(despacho) -> não grava, resultado "bloqueado_na_saida".
-    raise NotImplementedError("ETAPA 7.5: registrar")
+    pedido = estado["pedido"]
+    decisao = "indeferido_pela_chefia" if estado.get("rejeicoes", 0) >= MAX_REJEICOES else estado["decisao"]
+    protocolo = gerar_protocolo(pedido["matricula"], pedido["tipo"], pedido["data_inicio"], pedido["data_fim"])
+    resposta = chamar_mcp("registrar_decisao", {
+        "protocolo": protocolo, "matricula": pedido["matricula"], "tipo": pedido["tipo"],
+        "inicio": pedido["data_inicio"], "fim": pedido["data_fim"], "decisao": decisao,
+        "aprovador": estado.get("aprovador") or "sistema", "despacho": estado["despacho"],
+        "token": os.getenv("TOKEN_REGISTRO", ""), "thread_id": estado["thread_id"],
+    })
+    if not resposta.get("sucesso"):
+        resultado = "negado_pelo_server"
+    else:
+        resultado = "duplicado" if resposta.get("duplicado") else "registrado"
+    return {"protocolo": protocolo, "decisao": decisao, "resultado": resultado, "caminho": ["registrar"]}
 
 
 # ------------------------------------------------------------------ ETAPA 7.5: o grafo
@@ -316,7 +413,22 @@ def construir(checkpointer=None):
     #   consolidar -> redigir_despacho -> validar -> rotear_validacao {"redigir", "chefia", "registrar"}
     #   aprovacao_chefia -> rotear_chefia {"redigir", "registrar"}
     #   recusar, pedir_dados e registrar -> END
-    raise NotImplementedError("ETAPA 7.5: construir (arestas)")
+    construtor.add_edge(START, "receber")
+    construtor.add_edge("receber", "proteger_entrada")
+    construtor.add_conditional_edges("proteger_entrada", rotear_entrada, {"bloqueado": "recusar", "ok": "extrair"})
+    construtor.add_conditional_edges("extrair", rotear_extracao, {"incompleto": "pedir_dados", "ok": "identificar_servidor"})
+    construtor.add_conditional_edges("identificar_servidor", rotear_servidor,
+                                     {"nao_encontrado": "pedir_dados", "ok": "calcular_periodo"})
+    for especialista in ("normas", "escala", "financeiro"):  # fan-out: os três no mesmo passo
+        construtor.add_edge("calcular_periodo", especialista)
+    construtor.add_edge(["normas", "escala", "financeiro"], "consolidar")  # fan-in: espera os três
+    construtor.add_edge("consolidar", "redigir_despacho")
+    construtor.add_edge("redigir_despacho", "validar")
+    # até a Etapa 8, "chefia" ainda vai direto para "registrar"
+    construtor.add_conditional_edges("validar", rotear_validacao,
+                                     {"redigir": "redigir_despacho", "chefia": "registrar", "registrar": "registrar"})
+    for fim in ("recusar", "pedir_dados", "registrar"):
+        construtor.add_edge(fim, END)
     return construtor.compile(checkpointer=checkpointer)
 
 
