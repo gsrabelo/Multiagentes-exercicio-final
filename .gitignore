@@ -1,0 +1,20 @@
+# Arquivos gerados ao rodar o exercício (o .env já é ignorado pelo .gitignore da raiz)
+saidas/*
+!saidas/.gitkeep
+
+# Este projeto não está dentro do repositório do curso: o que vinha do .gitignore da raiz precisa estar aqui
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+.DS_Store
+.vscode/
+.idea/
