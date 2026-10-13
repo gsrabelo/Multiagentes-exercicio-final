@@ -48,6 +48,7 @@ Rodar (a partir de aula10/):
     python etapa07_grafo.py --sem-guardrail C7_autoaprovacao   # ETAPA 9.5: o server ainda nega?
     python etapa07_grafo.py --mermaid                     # o diagrama
 """
+import asyncio
 import operator
 import os
 import re
@@ -76,7 +77,7 @@ MODELO = configurar()
 
 MAX_TENTATIVAS = 3     # ciclo redigir <-> validar
 MAX_REJEICOES = 2      # ciclo chefia -> redigir
-USAR_VOTACAO = False          # 🆕 A (opcional): True usa os 3 extratores com votação (etapa02_extracao.py)
+USAR_VOTACAO = True           # 🆕 A (opcional): True usa os 3 extratores com votação (etapa02_extracao.py)
 USAR_TRIAGEM_HUMANA = False   # 🆕 C (opcional): True liga as duas faixas e o nó triagem_humana
 LIMIAR_OK = 0.4        # 🆕 C: abaixo disto, segue direto
 LIMIAR_BLOQUEIO = 0.8  # 🆕 C: a partir disto, bloqueia; entre os dois, um humano decide
@@ -175,7 +176,10 @@ def no_extrair(estado: Estado) -> dict:
     # ETAPA 7.2 -- pedido = extrair(texto); divergencia = False
     #   🆕 A (opcional) -- se USAR_VOTACAO: pedido, divergencia, votos = asyncio.run(extrair_com_votacao(texto))
     #   Devolva {"pedido": pedido.model_dump(mode="json"), "divergencia": ..., "caminho": ["extrair"]}
-    pedido, divergencia = extrair(estado["texto"]), False
+    if USAR_VOTACAO:  # 🆕 A: 3 extratores em paralelo e votação por campo
+        pedido, divergencia, _ = asyncio.run(extrair_com_votacao(estado["texto"]))
+    else:
+        pedido, divergencia = extrair(estado["texto"]), False
     return {"pedido": pedido.model_dump(mode="json"), "divergencia": divergencia, "caminho": ["extrair"]}
 
 

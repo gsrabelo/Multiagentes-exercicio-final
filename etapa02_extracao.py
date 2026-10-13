@@ -158,7 +158,15 @@ def extrair(texto: str) -> Pedido:
 # Para ligar no grafo depois de pronto: USAR_VOTACAO = True em etapa07_grafo.py.
 # 🆕 A.1 -- três instruções LIGEIRAMENTE diferentes para a MESMA tarefa (comece cada uma com f"Hoje é {texto_hoje()}. ")
 #   ex.: um extrator literal; um que confere as datas contra o calendário; um que "pensa como o RH".
-INSTRUCOES_VOTANTES: list[str] = []  # TODO 🆕 A.1: preencha com 3 strings
+#   As três partem das mesmas regras do extrator (INSTRUCOES_EXTRATOR já começa com "Hoje é ...") e mudam o jeito de ler.
+INSTRUCOES_VOTANTES: list[str] = [
+    INSTRUCOES_EXTRATOR + " Seja literal: copie as datas exatamente como o servidor escreveu, convertendo só o formato. "
+    "Na dúvida sobre qualquer campo, use null.",
+    INSTRUCOES_EXTRATOR + " Antes de responder, confira as datas contra o calendário: o dia existe, o fim não vem antes "
+    "do início e o ano está escrito ou é óbvio. Um período vago ('uns dez dias', 'perto da Páscoa') não tem data exata: null.",
+    INSTRUCOES_EXTRATOR + " Leia como um analista do RH: decida primeiro o tipo (férias, abono de um dia ou diária de "
+    "viagem a serviço) e depois preencha só o que o servidor informou de forma explícita, sem completar lacunas.",
+]
 
 
 async def extrair_com_votacao(texto: str) -> tuple[Pedido, bool, list[Pedido]]:
@@ -166,7 +174,11 @@ async def extrair_com_votacao(texto: str) -> tuple[Pedido, bool, list[Pedido]]:
     #     resultados = await asyncio.gather(*(Runner.run(e, texto) for e in extratores))
     #   depois chame votar([r.final_output for r in resultados]) e devolva (pedido_final, divergencia, votos).
     #   Conceito: aula7/exemplos/08_paralelismo/main.py (fan-out/fan-in), aqui em asyncio, sem grafo.
-    raise NotImplementedError("🆕 A.2: extrair_com_votacao")
+    extratores = [criar_extrator(instrucoes) for instrucoes in INSTRUCOES_VOTANTES]
+    resultados = await asyncio.gather(*(Runner.run(e, texto) for e in extratores))  # fan-out: os 3 ao mesmo tempo
+    votos = [r.final_output for r in resultados]                                     # fan-in
+    pedido, divergencia = votar(votos)
+    return pedido, divergencia, votos
 
 
 def votar(votos: list[Pedido]) -> tuple[Pedido, bool]:
