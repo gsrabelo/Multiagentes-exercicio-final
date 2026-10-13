@@ -26,6 +26,7 @@ Rodar:
 Pronto quando: C2 sai com dias_vendidos=10, C11 com tipo_destino="exterior", C5 com matricula=None;
                na votação, C1/C2 unânimes e C9 mostrando os votos.
 """
+
 import asyncio
 import sys
 import time
@@ -55,7 +56,6 @@ class TipoDestino(str, Enum):
     INTERIOR = "interior"
     EXTERIOR = "exterior"
 
-
 class Pedido(BaseModel):
     # ETAPA 2.1 -- complete os campos. O primeiro já está pronto como modelo.
     #   matricula: str | None          (4 dígitos; None se o servidor não informou)
@@ -67,30 +67,91 @@ class Pedido(BaseModel):
     #   justificativa: str             (resumo do motivo, sem dados de saúde)
     #   Escreva a DESCRIPTION de cada um: é a "instrução" que o LLM lê para preencher o campo.
     #   Referência: aula2/agente_output2.py (Ocorrencia, Envolvido, PapelEnvolvido)
-    tipo: TipoPedido = Field(description=(
-        "Tipo do pedido: 'ferias' (descanso anual, pode incluir venda de dias), 'abono' (folga de 1 dia útil), "
-        "'diaria' (viagem a serviço), 'licenca_saude' (afastamento por doença) ou 'outro'."))
+    tipo: TipoPedido = Field(
+        description=(
+            "Tipo do pedido: 'ferias' (descanso anual, pode incluir venda de dias), 'abono' (folga de 1 dia útil), "
+            "'diaria' (viagem a serviço), 'licenca_saude' (afastamento por doença) ou 'outro'."
+        )
+    )
+
+    matricula: str | None = Field(
+        description=(
+            "Matrícula do servidor, 4 dígitos (ex.: '1002'). null se o servidor não informou a matrícula no texto."
+        )
+    )
+
+    data_inicio: str | None = Field(
+        description=(
+            "Primeiro dia do afastamento ou da viagem, no formato AAAA-MM-DD, só se o servidor escreveu o DIA exato "
+            "(ex.: '09/04/2027' -> '2027-04-09'). Apenas o mês ou um período vago ('em agosto de 2027', 'perto da Páscoa', "
+            "'semana que vem') NÃO é data: use null, nunca o dia 1º do mês nem uma data provável."
+        )
+    )
+
+    data_fim: str | None = Field(
+        description=(
+            "Último dia do afastamento ou da viagem, no formato AAAA-MM-DD. No abono de um dia só, repita a data_inicio. "
+            "null se o servidor não disse o dia exato."
+        )
+    )
+
+    dias_vendidos: int = Field(
+        default=0,
+        ge=0,
+        le=10,
+        description=(
+            "Dias de férias que o servidor quer vender (abono pecuniário, de 0 a 10). "
+            "0 se ele não pediu a venda com um número explícito de dias."
+        ),
+    )
+
+    destino: str | None = Field(
+        description=(
+            "Só para diária: a cidade de destino da viagem a serviço (ex.: 'Recife'). null nos outros tipos."
+        )
+    )
+
+    tipo_destino: TipoDestino | None = Field(
+        description=(
+            "Só para diária. Primeiro veja o PAÍS do destino: fora do Brasil é sempre 'exterior' (ex.: Buenos Aires, "
+            "Lisboa), mesmo sendo capital de outro país. No Brasil: 'capital' (capital de estado ou Brasília) ou "
+            "'interior' (outra cidade). null nos outros tipos."
+        )
+    )
+
+    justificativa: str = Field(
+        description=(
+            "Resumo curto do motivo do pedido, em uma frase. Nunca inclua dados de saúde (doença, CID, sintomas)."
+        )
+    )
 
 
 def criar_extrator(instrucoes: str, input_guardrails: list | None = None) -> Agent:
     # ETAPA 2.2 -- devolva Agent(name="Extrator", instructions=instrucoes, output_type=Pedido,
     #   input_guardrails=input_guardrails or [])
     #   (os guardrails só entram na Etapa 3; até lá, a lista fica vazia)
-    raise NotImplementedError("ETAPA 2.2: criar_extrator")
+    return Agent(
+        name="Extrator",
+        instructions=instrucoes,
+        output_type=Pedido,
+        input_guardrails=input_guardrails or [],
+    )
 
 
 INSTRUCOES_EXTRATOR = (
     f"Hoje é {texto_hoje()}. "  # (PRONTO) a data real: o modelo não tem relógio (aula3/agente_retry.py)
     "Você extrai pedidos de servidores para o RH (férias, abono ou diária). "
-    "TODO ETAPA 2.2: complete -- datas no formato AAAA-MM-DD, não invente o que não foi dito (use null), "
-    "dias vendidos só se o servidor pedir explicitamente."
+    "Preencha os campos só com o que o servidor escreveu: datas no formato AAAA-MM-DD; o que não foi dito "
+    "(matrícula, dia exato) fica null, nunca invente nem complete com um valor provável (um mês sem o dia é null). "
+    "No abono, data_fim = data_inicio. destino e tipo_destino só existem na diária; nos outros tipos, null. "
+    "Dias vendidos só se o servidor pedir a venda explicitamente, com o número de dias; senão, 0."
 )
 
 
 def extrair(texto: str) -> Pedido:
     # ETAPA 2.3 -- rode criar_extrator(INSTRUCOES_EXTRATOR) com Runner.run_sync e devolva final_output
     #   (é um objeto Pedido, não texto!)
-    raise NotImplementedError("ETAPA 2.3: extrair")
+    return Runner.run_sync(criar_extrator(INSTRUCOES_EXTRATOR), texto).final_output
 
 
 # ------------------------------------------------------------------ 🆕 A: votação (OPCIONAL, bônus)
@@ -113,7 +174,9 @@ def votar(votos: list[Pedido]) -> tuple[Pedido, bool]:
     pedir esclarecimento em vez de adivinhar. Os campos não votados vêm do primeiro voto."""
     decidido, divergencia = {}, False
     for campo in ("tipo", "matricula", "data_inicio", "data_fim", "dias_vendidos"):
-        valor, quantos = Counter(getattr(voto, campo) for voto in votos).most_common(1)[0]
+        valor, quantos = Counter(getattr(voto, campo) for voto in votos).most_common(1)[
+            0
+        ]
         decidido[campo] = valor
         if quantos < 2 and campo in ("tipo", "data_inicio", "data_fim"):
             divergencia = True
@@ -121,7 +184,12 @@ def votar(votos: list[Pedido]) -> tuple[Pedido, bool]:
 
 
 def _demo_extracao() -> None:
-    for nome in ("C1_abono_simples", "C2_ferias_com_venda", "C5_sem_matricula", "C11_diaria_exterior"):
+    for nome in (
+        "C1_abono_simples",
+        "C2_ferias_com_venda",
+        "C5_sem_matricula",
+        "C11_diaria_exterior",
+    ):
         pedido = extrair(CASOS[nome]["pedido"])
         print(f"\n{nome}\n  {pedido.model_dump()}")
 
@@ -134,14 +202,18 @@ def _demo_votacao() -> None:
         segundos = time.perf_counter() - inicio
         print(f"\n{nome}  ({segundos:.1f}s, divergencia={divergencia})")
         for i, voto in enumerate(votos, 1):
-            print(f"  voto {i}: tipo={voto.tipo.value} {voto.data_inicio}..{voto.data_fim} vende={voto.dias_vendidos}")
+            print(
+                f"  voto {i}: tipo={voto.tipo.value} {voto.data_inicio}..{voto.data_fim} vende={voto.dias_vendidos}"
+            )
         print(f"  decisão: {pedido.model_dump()}")
     # (PRONTO) os mesmos 3 extratores EM SEQUÊNCIA, para comparar: o paralelo fica perto do tempo de UMA chamada?
     texto = CASOS["C2_ferias_com_venda"]["pedido"]
     inicio = time.perf_counter()
     for instrucoes in INSTRUCOES_VOTANTES:
         Runner.run_sync(criar_extrator(instrucoes), texto)
-    print(f"\nC2 em sequência: {time.perf_counter() - inicio:.1f}s (compare com o tempo do C2 em paralelo, acima)")
+    print(
+        f"\nC2 em sequência: {time.perf_counter() - inicio:.1f}s (compare com o tempo do C2 em paralelo, acima)"
+    )
 
 
 if __name__ == "__main__":
