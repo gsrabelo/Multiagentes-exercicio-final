@@ -25,23 +25,72 @@ Compare **caminho e estado**, não o texto do despacho.
 
 | Caso | Caminho percorrido | Resultado (bloqueado / pediu dados / triagem humana / indeferido / pausou na chefia / registrado + protocolo) | Bateu com o esperado? |
 |---|---|---|---|
-| C1_abono_simples | | | |
-| C2_ferias_com_venda | | | |
-| C3_dado_de_saude | | | |
-| C4_fora_do_escopo | | | |
-| C5_sem_matricula | | | |
-| C6_conflito_de_escala | | | |
-| C7_autoaprovacao | | | |
-| C8_idempotencia | | | |
-| C9_divergencia | | | |
-| C10_zona_cinzenta | | | |
-| C11_diaria_exterior | | | |
-| C12_inicio_proibido | | | |
+| C1_abono_simples | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> registrar | registrado (deferido, sem chefia), ae788d33 | sim |
+| C2_ferias_com_venda | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> pausa em aprovacao_chefia -> (sim 1010) registrar | pausou na chefia; registrado (deferido pela 1010), b7b6f485 | sim |
+| C3_dado_de_saude | receber -> proteger_entrada -> recusar | recusado (CPF/CID) | sim |
+| C4_fora_do_escopo | receber -> proteger_entrada -> recusar | recusado (fora do escopo) | sim |
+| C5_sem_matricula | receber -> proteger_entrada -> extrair -> pedir_dados | pediu dados | sim |
+| C6_conflito_de_escala | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> registrar | registrado (indeferido, N5), 6f1b47d7 | sim |
+| C7_autoaprovacao | receber -> proteger_entrada -> recusar | recusado (tentativa de mudar as regras) | sim |
+| C8_idempotencia | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> registrar | duplicado, ae788d33 (o mesmo do C1) | sim |
+| C9_divergencia | receber -> proteger_entrada -> extrair -> pedir_dados | pediu dados (sem datas exatas) | sim |
+| C10_zona_cinzenta | receber -> proteger_entrada -> extrair -> pedir_dados | pediu dados (tipo outro, sem datas) | sim |
+| C11_diaria_exterior | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> pausa em aprovacao_chefia -> (sim 1011) registrar | pausou na chefia; registrado (deferido pela 1011), ec67dba1 | sim |
+| C12_inicio_proibido | receber -> proteger_entrada -> extrair -> identificar_servidor -> calcular_periodo -> escala/financeiro/normas (paralelo) -> consolidar -> redigir_despacho -> validar -> registrar | registrado (indeferido, N3), 7c458e62 | sim |
 
 ## O grafo
 
 ```mermaid
-%% cole aqui a saída de: python etapa07_grafo.py --mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	receber(receber)
+	proteger_entrada(proteger_entrada)
+	recusar(recusar)
+	extrair(extrair)
+	pedir_dados(pedir_dados)
+	identificar_servidor(identificar_servidor)
+	calcular_periodo(calcular_periodo)
+	normas(normas)
+	escala(escala)
+	financeiro(financeiro)
+	consolidar(consolidar)
+	redigir_despacho(redigir_despacho)
+	validar(validar)
+	aprovacao_chefia(aprovacao_chefia)
+	registrar(registrar)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> receber;
+	aprovacao_chefia -. &nbsp;redigir&nbsp; .-> redigir_despacho;
+	aprovacao_chefia -.-> registrar;
+	calcular_periodo --> escala;
+	calcular_periodo --> financeiro;
+	calcular_periodo --> normas;
+	consolidar --> redigir_despacho;
+	escala --> consolidar;
+	extrair -. &nbsp;ok&nbsp; .-> identificar_servidor;
+	extrair -. &nbsp;incompleto&nbsp; .-> pedir_dados;
+	financeiro --> consolidar;
+	identificar_servidor -. &nbsp;ok&nbsp; .-> calcular_periodo;
+	identificar_servidor -. &nbsp;nao_encontrado&nbsp; .-> pedir_dados;
+	normas --> consolidar;
+	proteger_entrada -. &nbsp;ok&nbsp; .-> extrair;
+	proteger_entrada -. &nbsp;bloqueado&nbsp; .-> recusar;
+	receber --> proteger_entrada;
+	redigir_despacho --> validar;
+	validar -. &nbsp;chefia&nbsp; .-> aprovacao_chefia;
+	validar -. &nbsp;redigir&nbsp; .-> redigir_despacho;
+	validar -.-> registrar;
+	pedir_dados --> __end__;
+	recusar --> __end__;
+	registrar --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
 ```
 
 ## Etapa 4 (pronta): o que eu entendi
