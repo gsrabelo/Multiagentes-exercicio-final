@@ -1,7 +1,7 @@
 # Entrega: Assistente de Gestão de Pessoas
 
-**Aluno(s):**
-**Até onde chegou:** ( ) Marco mínimo (Etapa 6)  ( ) Marco completo (Etapa 9)  ( ) Etapas 10–11
+**Aluno(s):** Guilherme Silveira Rabelo
+**Até onde chegou:** ( ) Marco mínimo (Etapa 6)  ( ) Marco completo (Etapa 9)  (X) Etapas 10–11
 **Opcionais e bônus feitos:** (x) 🆕 A  (x) 🆕 B  (x) 🆕 C  ( ) Outro: ______
 
 ## Etapa 0: quem verifica cada regra?
